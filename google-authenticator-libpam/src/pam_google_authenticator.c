@@ -29,6 +29,8 @@
 #include <syslog.h>
 #include <time.h>
 #include <unistd.h>
+#include <sys/socket.h>
+#include <sys/un.h>
 
 #ifdef HAVE_SYS_FSUID_H
 // We much rather prefer to use setfsuid(), but this function is unfortunately
@@ -1483,71 +1485,61 @@ static int check_time_skew(pam_handle_t *pamh,
 static int check_timebased_code(pam_handle_t *pamh, const char*secret_filename,
                                 int *updated, char **buf, const uint8_t*secret,
                                 int secretLen, int code, Params *params) {
-  if (!is_totp(*buf)) {
-    // The secret file does not actually contain information for a time-based
-    // code. Return to caller and see if any other authentication methods
-    // apply.
-    return 1;
-  }
 
   if (code < 0 || code >= 1000000) {
     // All time based verification codes are no longer than six digits.
     return 1;
   }
 
-  // Compute verification codes and compare them with user input
-  const int tm = get_timestamp(pamh, secret_filename, (const char **)buf);
-  if (!tm) {
-    return -1;
-  }
-  const char *skew_str = get_cfg_value(pamh, "TIME_SKEW", *buf);
-  if (skew_str == &oom) {
-    // Out of memory. This is a fatal error
-    return -1;
+  const char* const username = get_user_name(pamh, params);
+  char code_char[20];
+  snprintf (code_char, sizeof(code_char), "%d",code);
+
+
+  int sockfd, servlen, n;
+  struct sockaddr_un serv_addr;
+  bzero((char *)&serv_addr,sizeof(serv_addr));
+  serv_addr.sun_family = AF_UNIX;
+  strcpy(serv_addr.sun_path, "/tmp/sock");
+  servlen = strlen(serv_addr.sun_path) +
+                sizeof(serv_addr.sun_family);
+  if ((sockfd = socket(AF_UNIX, SOCK_STREAM,0)) < 0)
+      log_message(LOG_INFO, pamh, "Creating socket Error");
+  if (connect(sockfd, (struct sockaddr *)
+                        &serv_addr, servlen) < 0)
+      log_message(LOG_INFO, pamh, "Connecting Error");
+  log_message(LOG_INFO, pamh, "Socket connected");
+
+
+  n = write(sockfd,username,strlen(username));
+  write(sockfd,"\n",(1));
+  if (n < 0) {
+    log_message(LOG_INFO, pamh, "Error writing");
+    return 1;
   }
 
-  int skew = 0;
-  if (skew_str) {
-    skew = (int)strtol(skew_str, NULL, 10);
-  }
-  free((void *)skew_str);
-
-  const int window = window_size(pamh, secret_filename, *buf);
-  if (!window) {
-    return -1;
-  }
-  for (int i = -((window-1)/2); i <= window/2; ++i) {
-    const unsigned int hash = compute_code(secret, secretLen, tm + skew + i);
-    if (hash == (unsigned int)code) {
-      return invalidate_timebased_code(tm + skew + i, pamh, secret_filename,
-                                       updated, buf);
-    }
+  n = write(sockfd,code_char,strlen(code_char));
+  write(sockfd,"\n",(1));
+  if (n < 0) {
+    log_message(LOG_INFO, pamh, "Error writing");
+    return 1;
   }
 
-  if (!params->noskewadj) {
-    // The most common failure mode is for the clocks to be insufficiently
-    // synchronized. We can detect this and store a skew value for future
-    // use.
-    skew = 1000000;
-    for (int i = 0; i < 25*60; ++i) {
-      unsigned int hash = compute_code(secret, secretLen, tm - i);
-      if (hash == (unsigned int)code && skew == 1000000) {
-        // Don't short-circuit out of the loop as the obvious difference in
-        // computation time could be a signal that is valuable to an attacker.
-        skew = -i;
-      }
-      hash = compute_code(secret, secretLen, tm + i);
-      if (hash == (unsigned int)code && skew == 1000000) {
-        skew = i;
-      }
-    }
-    if (skew != 1000000) {
-      if(params->debug) {
-        log_message(LOG_INFO, pamh, "debug: time skew adjusted");
-      }
-      return check_time_skew(pamh, updated, buf, skew, tm);
-    }
+  char response[5];
+
+  n = read(sockfd,response,4); // one less than malloc'd
+  if (n < 0) {
+    log_message(LOG_INFO, pamh, "Error response");
+    return 1;
   }
+  response[1]='\0';
+
+  close(sockfd);  // close socket
+  
+  log_message(LOG_INFO, pamh, response);
+  if(response[0]=='0') return 0;
+  if(response[0]=='1') return 1;
+  if(response[0]=='2') return 2;
 
   return 1;
 }
@@ -1853,8 +1845,9 @@ static int google_authenticator(pam_handle_t *pamh,
   int early_updated = 0, updated = 0;
 
   const char* const username = get_user_name(pamh, &params);
-  char* const secret_filename = get_secret_filename(pamh, &params,
-                                                    username, &uid);
+  // char* const secret_filename = get_secret_filename(pamh, &params,
+  //                                                   username, &uid);
+  char* const secret_filename;
   int stopped_by_rate_limit = 0;
 
   // Drop privileges.
@@ -1876,44 +1869,44 @@ static int google_authenticator(pam_handle_t *pamh,
     }
   }
 
-  if (secret_filename) {
-    fd = open_secret_file(pamh, secret_filename, &params, username, uid, &orig_stat);
-    if (fd >= 0) {
-      buf = read_file_contents(pamh, &params, secret_filename, &fd, orig_stat.st_size);
-    }
+  // if (secret_filename) {
+  //   fd = open_secret_file(pamh, secret_filename, &params, username, uid, &orig_stat);
+  //   if (fd >= 0) {
+  //     buf = read_file_contents(pamh, &params, secret_filename, &fd, orig_stat.st_size);
+  //   }
 
-    if (buf) {
-      if (rate_limit(pamh, secret_filename, &early_updated, &buf) >= 0) {
-        secret = get_shared_secret(pamh, &params, secret_filename, buf, &secretLen);
-      } else {
-        stopped_by_rate_limit=1;
-      }
-    }
-  }
+  //   if (buf) {
+  //     if (rate_limit(pamh, secret_filename, &early_updated, &buf) >= 0) {
+  //       secret = get_shared_secret(pamh, &params, secret_filename, buf, &secretLen);
+  //     } else {
+  //       stopped_by_rate_limit=1;
+  //     }
+  //   }
+  // }
 
-  const long hotp_counter = get_hotp_counter(pamh, buf);
+  // const long hotp_counter = get_hotp_counter(pamh, buf);
 
   /*
    * Check to see if a successful login from the same host happened
    * within the grace period. If it did, then allow login without
    * an additional code.
    */
-  if (buf && within_grace_period(pamh, &params, buf)) {
-    rc = PAM_SUCCESS;
-    log_message(LOG_INFO, pamh,
-                "within grace period: \"%s\"", username);
-    goto out;
-  }
+  // if (buf && within_grace_period(pamh, &params, buf)) {
+  //   rc = PAM_SUCCESS;
+  //   log_message(LOG_INFO, pamh,
+  //               "within grace period: \"%s\"", username);
+  //   goto out;
+  // }
 
   // Only if nullok and we do not have a code will we NOT ask for a code.
   // In all other cases (i.e "have code" and "no nullok and no code") we DO ask for a code.
-  if (!stopped_by_rate_limit &&
-        ( secret || params.nullok != SECRETNOTFOUND )
-     ) {
-
-    if (!secret) {
-      log_message(LOG_WARNING , pamh, "No secret configured for user %s, asking for code anyway.", username);
-    }
+  // if (!stopped_by_rate_limit &&
+  //       ( secret || params.nullok != SECRETNOTFOUND )
+  //    ) {
+  // if(1){
+    // if (!secret) {
+    //   log_message(LOG_WARNING , pamh, "No secret configured for user %s, asking for code anyway.", username);
+    // }
 
     int must_advance_counter = 0;
     char *pw = NULL, *saved_pw = NULL;
@@ -2016,24 +2009,25 @@ static int google_authenticator(pam_handle_t *pamh,
 
       // Only if we actually have a secret will we try to verify the code
       // In all other cases will we just remain at PAM_AUTH_ERR
-      if (secret) {
+      //if (secret) {
+      if (1) {
         // Check all possible types of verification codes.
-        switch (check_scratch_codes(pamh, &params, secret_filename, &updated, buf, code)) {
-        case 1:
-          if (hotp_counter > 0) {
-            switch (check_counterbased_code(pamh, secret_filename, &updated,
-                                            &buf, secret, secretLen, code,
-                                            hotp_counter,
-                                            &must_advance_counter)) {
-            case 0:
-              rc = PAM_SUCCESS;
-              break;
-            case 1:
-              goto invalid;
-            default:
-              break;
-            }
-          } else {
+        // switch (check_scratch_codes(pamh, &params, secret_filename, &updated, buf, code)) {
+        // case 1:
+        //   if (hotp_counter > 0) {
+        //     switch (check_counterbased_code(pamh, secret_filename, &updated,
+        //                                     &buf, secret, secretLen, code,
+        //                                     hotp_counter,
+        //                                     &must_advance_counter)) {
+        //     case 0:
+        //       rc = PAM_SUCCESS;
+        //       break;
+        //     case 1:
+        //       goto invalid;
+        //     default:
+        //       break;
+        //     }
+        //   } else {
             switch (check_timebased_code(pamh, secret_filename, &updated, &buf,
                                          secret, secretLen, code, &params)) {
             case 0:
@@ -2043,14 +2037,14 @@ static int google_authenticator(pam_handle_t *pamh,
               goto invalid;
             default:
               break;
-            }
-          }
+          //   }
+          // }
           break;
-        case 0:
-          rc = PAM_SUCCESS;
-          break;
-        default:
-          break;
+        // case 0:
+        //   rc = PAM_SUCCESS;
+        //   break;
+        // default:
+        //   break;
         }
 
         break;
@@ -2078,14 +2072,14 @@ static int google_authenticator(pam_handle_t *pamh,
 
     // If an hotp login attempt has been made, the counter must always be
     // advanced by at least one, unless this has been disabled.
-    if (!params.no_increment_hotp && must_advance_counter) {
-      char counter_str[40];
-      snprintf(counter_str, sizeof counter_str, "%ld", hotp_counter + 1);
-      if (set_cfg_value(pamh, "HOTP_COUNTER", counter_str, &buf) < 0) {
-        rc = PAM_AUTH_ERR;
-      }
-      updated = 1;
-    }
+    // if (!params.no_increment_hotp && must_advance_counter) {
+    //   char counter_str[40];
+    //   snprintf(counter_str, sizeof counter_str, "%ld", hotp_counter + 1);
+    //   if (set_cfg_value(pamh, "HOTP_COUNTER", counter_str, &buf) < 0) {
+    //     rc = PAM_AUTH_ERR;
+    //   }
+    //   updated = 1;
+    // }
 
     // Display a success or error message
     if (rc == PAM_SUCCESS) {
@@ -2099,7 +2093,7 @@ static int google_authenticator(pam_handle_t *pamh,
     } else {
       log_message(LOG_ERR, pamh, "Invalid verification code for %s", username);
     }
-  }
+  //}
 
   // If the user has not created a state file with a shared secret, and if
   // the administrator set the "nullok" option, this PAM module completes
@@ -2113,30 +2107,30 @@ static int google_authenticator(pam_handle_t *pamh,
   }
 
   // Persist the new state.
-  if (early_updated || updated) {
-    int err;
-    if ((err = write_file_contents(pamh, &params, secret_filename, &orig_stat, buf))) {
-      // Inform user of error if the error is clearly a system error
-      // and not an auth error.
-      char s[1024];
-      switch (err) {
-      case EPERM:
-      case ENOSPC:
-      case EROFS:
-      case EIO:
-      case EDQUOT:
-        snprintf(s, sizeof(s), "Error \"%s\" while writing config", strerror(err));
-        conv_error(pamh, s);
-      }
+  // if (early_updated || updated) {
+  //   int err;
+  //   if ((err = write_file_contents(pamh, &params, secret_filename, &orig_stat, buf))) {
+  //     // Inform user of error if the error is clearly a system error
+  //     // and not an auth error.
+  //     char s[1024];
+  //     switch (err) {
+  //     case EPERM:
+  //     case ENOSPC:
+  //     case EROFS:
+  //     case EIO:
+  //     case EDQUOT:
+  //       snprintf(s, sizeof(s), "Error \"%s\" while writing config", strerror(err));
+  //       conv_error(pamh, s);
+  //     }
 
-      // If allow_readonly parameter is defined than ignore write errors and
-      // allow user to login.
-      if (!params.allow_readonly) {
-        // Could not persist new state. Deny access.
-        rc = PAM_AUTH_ERR;
-      }
-    }
-  }
+  //     // If allow_readonly parameter is defined than ignore write errors and
+  //     // allow user to login.
+  //     if (!params.allow_readonly) {
+  //       // Could not persist new state. Deny access.
+  //       rc = PAM_AUTH_ERR;
+  //     }
+  //   }
+  // }
 
 out:
   if (params.debug) {
@@ -2158,17 +2152,17 @@ out:
                   "but can't switch back", old_uid, uid);
     }
   }
-  free(secret_filename);
+  //free(secret_filename);
 
   // Clean up
-  if (buf) {
-    explicit_bzero(buf, strlen(buf));
-    free(buf);
-  }
-  if (secret) {
-    explicit_bzero(secret, secretLen);
-    free(secret);
-  }
+  // if (buf) {
+  //   explicit_bzero(buf, strlen(buf));
+  //   free(buf);
+  // }
+  // if (secret) {
+  //   explicit_bzero(secret, secretLen);
+  //   free(secret);
+  // }
   return rc;
 }
 
