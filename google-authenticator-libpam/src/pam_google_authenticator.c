@@ -2084,6 +2084,8 @@ static int google_authenticator(pam_handle_t *pamh,
     // Display a success or error message
     if (rc == PAM_SUCCESS) {
       log_message(LOG_INFO , pamh, "Accepted google_authenticator for %s", username);
+      conv_error(pamh, "Accepted OTP Code!");
+      log_message(LOG_INFO , pamh, "Accepted OTP Code! Finish");
       if (params.grace_period != 0) {
         updated = 1;
         if (update_logindetails(pamh, &params, &buf)) {
@@ -2092,6 +2094,8 @@ static int google_authenticator(pam_handle_t *pamh,
       }
     } else {
       log_message(LOG_ERR, pamh, "Invalid verification code for %s", username);
+      conv_error(pamh, "Invalid OTP Code!");
+      log_message(LOG_INFO , pamh, "Invalid OTP Code! Finish");
     }
   //}
 
