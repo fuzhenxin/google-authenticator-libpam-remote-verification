@@ -1,16 +1,8 @@
+import os, sys, time, json
 from socketserver import ThreadingUnixStreamServer, StreamRequestHandler, ThreadingTCPServer
-import random
+import qrcode, socket, pyotp
 import mysql.connector
-import time
-import os
-import requests
-import hmac, base64, struct, hashlib, time, platform
 import config
-import json
-import sys
-import socket
-import qrcode
-import pyotp
 
 class OTPDB:
     def __init__(self):
@@ -56,31 +48,9 @@ class OTPDB:
         except Exception as inst:
             return {"code": -1, "reason": str(inst)}
 
-    # def get_all_elements(self):
-    #     try:
-    #         sql = "select user_id,secret from {}".format(self.table_name)
-    #         # print(sql, select_value)
-    #         self.mycursor.execute(sql)
-    #         myresult = self.mycursor.fetchall()
-    #         self.mydb.commit()
-    #         return {"code": 0, "data": myresult}
-    #     except Exception as inst:
-    #         return {"code": -1, "reason": str(inst)}
-    # def update_synced(self, user_id):
-    #     try:
-    #         sql = "update {} set is_synced=1 where user_id={}".format(self.table_name, user_id)
-    #         # print(sql, select_value)
-    #         self.mycursor.execute(sql)
-    #         myresult = self.mycursor.fetchall()
-    #         self.mydb.commit()
-    #         return {"code": 0, "data": myresult}
-    #     except Exception as inst:
-    #         return {"code": -1, "reason": str(inst)}
-
     def get_all_user(self):
         try:
             sql = "select user_id,secret from {}".format(self.table_name)
-            # print(sql, select_value)
             self.mycursor.execute(sql)
             myresult = self.mycursor.fetchall()
             self.mydb.commit()
@@ -114,23 +84,11 @@ class OTPUtils:
         self.datadb=OTPDB()
 
     def get_new_secret(self,user_id):
-        try:
-            # tmp_file_name = "/tmp/otp_{}.txt".format(str(int(random.random()*10000)))
-            # os.system("google-authenticator -q -t --allow-reuse -f -r 10 -R 15 -W --issuer={} --label={}@{} --secret={}".format(
-            #     config.OTP_ISSUER, user_id, config.OTP_ISSUER, tmp_file_name))
-            # with open(tmp_file_name) as f:
-            #     lines = f.readlines()
-            # os.popen("rm {} -f".format(tmp_file_name))
-            # scret_line = lines[0].strip()
-            scret_line = pyotp.random_base32()
-        except Exception as inst:
-            return {"code":-1, "reason": str(inst)}
+        scret_line = pyotp.random_base32()
         return {"code":0, "data": scret_line}
 
     def secret_to_url(self, user_id, secret):
         url_line = pyotp.totp.TOTP(secret).provisioning_uri(name='{}@{}'.format(user_id, config.OTP_ISSUER), issuer_name=config.OTP_ISSUER)
-        url_line1 = "otpauth://totp/{}@pkuhpc?secret={}&issuer=pkuhpc".format(user_id, secret)
-        print(url_line, url_line1)
         return url_line
 
     def get_otp(self, user_id):
@@ -141,24 +99,11 @@ class OTPUtils:
             return {"code": 0, "msg":"User not exist!", "userexist": False}
         else:
             return {"code": 0, "msg": ret["data"][0][0], "userexist": True}
-    # def get_hpcuid(self, user_id):
-    #     all_user_uid = requests.get("http://162.105.133.132/all/user").json()
-    #     for i,j,k in zip(all_user_uid["userList"], all_user_uid["uidNumberList"], all_user_uid["gidNumberList"]):
-    #         if i==user_id:
-    #             return {"code":0, "data": {"uid":j,"gid":k}}
-    #     return {"code":-1, "reason": "getuid error"}
 
     def get_new_otp(self, user_id):
         ret = self.get_new_secret(user_id)
         if ret["code"] < 0: return ret
         new_secret = ret["data"]
-
-        #ret = self.get_hpcuid(user_id)
-        #if ret["code"] < 0: return ret
-        #hpc_uid = ret["data"]["uid"]
-        #hpc_gid = ret["data"]["gid"]
-        hpc_uid = 0
-        hpc_gid = 0
 
         insert_dict = {
             "user_id": user_id,
@@ -169,15 +114,6 @@ class OTPUtils:
         if ret["code"]<0: return ret
         return {"code": 0, "data": self.secret_to_url(user_id, new_secret)}
     
-    # def get_otp_code(self, secret, bias):
-    #     if len(secret)%8!=0: secret = secret + "="*(8-len(secret)%8)
-    #     intervals_no=int(time.time()+bias)//30
-    #     key = base64.b32decode(secret, True)
-    #     msg = struct.pack(">Q", intervals_no)
-    #     h = hmac.new(key, msg, hashlib.sha1).digest()
-    #     o = ord(chr(h[19])) & 15
-    #     h = (struct.unpack(">I", h[o:o+4])[0] & 0x7fffffff) % 1000000
-    #     return '%06d' % h
 
     def verify_code(self, userid, input_code):
         ret = self.get_otp(userid)
@@ -185,9 +121,6 @@ class OTPUtils:
         if ret["code"]==0 and ret["userexist"] is False: return {"code": 0, "data": 2}
         secret = ret["msg"]
         print([secret])
-        # if secret=="empty": return {"code":-1}
-        # code1 = self.get_otp_code(secret, 0)
-        # code2 = self.get_otp_code(secret, -30)
         totp = pyotp.TOTP(secret)
         code1 = totp.at(time.time())
         code2 = totp.at(time.time()-30)
@@ -257,10 +190,3 @@ if __name__=="__main__":
             print(inst)
         print("Listening on {}".format(socket_file_name))
         ThreadingUnixStreamServer(socket_file_name, OTPServerClient_scoket).serve_forever()
-
-    
-    # print(otpserver.verify_code(sys.argv[1], sys.argv[2]))
-    # print(res)
-
-# sudo yum install https://dl.fedoraproject.org/pub/epel/epel-release-latest-7.noarch.rpm
-# sudo yum install google-authenticator
