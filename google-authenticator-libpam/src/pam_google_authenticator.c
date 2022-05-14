@@ -1845,8 +1845,10 @@ static int google_authenticator(pam_handle_t *pamh,
   int early_updated = 0, updated = 0;
 
   const char* const username = get_user_name(pamh, &params);
-  // char* const secret_filename = get_secret_filename(pamh, &params,
+  log_message(LOG_INFO , pamh, username);
+  //char* const secret_filename = get_secret_filename(pamh, &params,
   //                                                   username, &uid);
+  uid = params.uid;
   char* const secret_filename;
   int stopped_by_rate_limit = 0;
 
@@ -1862,6 +1864,8 @@ static int google_authenticator(pam_handle_t *pamh,
         goto out;
       }
     }
+
+    log_message(LOG_INFO , pamh, drop_username);
 
     if (drop_privileges(pamh, drop_username, uid, &old_uid, &old_gid)) {
       // Don't allow to continue without dropping privs.
