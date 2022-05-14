@@ -9,6 +9,7 @@ OTP_ISSUER = "pkuhpc"
 # For Server and Client Server
 OTP_SERVER_PORT = 1027
 OTP_SERVER_ADDR = "127.0.0.1"
+CONNECTION_KEY = "uiwehgiwgbeiweil"
 
 # For Client Server
 SCOK_ADDR = "/tmp/sock"

@@ -135,6 +135,10 @@ class OTPServer_scoket(StreamRequestHandler):
         verify_dict = json.loads(verify_json)
         username = verify_dict["Username"]
         otpcode = verify_dict["OTPCode"]
+        connection_key = verify_dict["ConnectionKey"]
+        if connection_key!=config.CONNECTION_KEY:
+            self.wfile.write("-4")
+            return
         print([username, otpcode])
         ret = self.otputil.verify_code(username, otpcode)
         if ret["code"]<0:
@@ -158,7 +162,11 @@ class OTPServerClient_scoket(StreamRequestHandler):
         print("Socket Connected")
         sock.connect((config.OTP_SERVER_ADDR, config.OTP_SERVER_PORT))
 
-        send_str = (json.dumps({"Username": username.decode("utf-8"), "OTPCode": otp_code.decode("utf-8") })+"\n").encode('utf-8')
+        send_str = (json.dumps({
+            "Username": username.decode("utf-8"), 
+            "OTPCode": otp_code.decode("utf-8"),
+            "ConnectionKey": config.CONNECTION_KEY
+            })+"\n").encode('utf-8')
         print([send_str])
         sock.send(send_str)
         print("Send finished {}".format(send_str))
