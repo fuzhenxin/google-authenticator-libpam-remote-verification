@@ -65,6 +65,7 @@
 
 typedef struct Params {
   const char *secret_filename_spec;
+  const char *socket_filename;
   const char *authtok_prompt;
   enum { NULLERR=0, NULLOK, SECRETNOTFOUND } nullok;
   int        noskewadj;
@@ -1500,7 +1501,7 @@ static int check_timebased_code(pam_handle_t *pamh, const char*secret_filename,
   struct sockaddr_un serv_addr;
   bzero((char *)&serv_addr,sizeof(serv_addr));
   serv_addr.sun_family = AF_UNIX;
-  strcpy(serv_addr.sun_path, "/tmp/sock");
+  strcpy(serv_addr.sun_path, params->socket_filename ?params->socket_filename : "/tmp/sock");
   servlen = strlen(serv_addr.sun_path) +
                 sizeof(serv_addr.sun_family);
   if ((sockfd = socket(AF_UNIX, SOCK_STREAM,0)) < 0)
@@ -1760,6 +1761,8 @@ static int parse_args(pam_handle_t *pamh, int argc, const char **argv,
   for (int i = 0; i < argc; ++i) {
     if (!strncmp(argv[i], "secret=", 7)) {
       params->secret_filename_spec = argv[i] + 7;
+    } else if (!strncmp(argv[i], "socket=", 7)) {
+      params->socket_filename = argv[i] + 7;
     } else if (!strncmp(argv[i], "authtok_prompt=", 15)) {
       params->authtok_prompt = argv[i] + 15;
     } else if (!strncmp(argv[i], "user=", 5)) {

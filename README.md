@@ -14,9 +14,11 @@ cp .libs/pam_google_authenticator.so /usr/lib64/security
 ```
 
 ## Config google-authenticator-libpam
-1. The user parameter must be set in ``/etc/pam.d/sshd``
-2. Other setting is the same in original google-authenticator-libpam
-3. The following parameters do not work any more: secret, noskewadj, grace_period
+1. The ``user`` parameter must be set in ``/etc/pam.d/sshd``
+2. The ``socket`` parameter must be set to connect with ClientServer and is should be the same with ``SOCK_ADDR`` in ``config.py``
+3. Other setting is the same in original google-authenticator-libpam
+4. The following parameters do not work any more: secret, noskewadj, grace_period
+5. Example:``auth required pam_google_authenticator.so user=otp socket=/tmp/sock1``
 
 ## Run Servers
 1. Server: ``python3 OTPServer.py server`` in a verification server which can connect to mysql.

@@ -128,7 +128,7 @@ class OTPUtils:
         return {"code": 0, "data": 1}
 
 class OTPServer_scoket(StreamRequestHandler):
-    otputil = OTPUtils()
+    otputil = None
     def handle(self):
         print("Listen new!")
         verify_json = self.rfile.readline(512).strip()
@@ -140,6 +140,7 @@ class OTPServer_scoket(StreamRequestHandler):
             self.wfile.write("-4")
             return
         print([username, otpcode])
+        if self.otputil is None: self.otputil = OTPUtils()
         ret = self.otputil.verify_code(username, otpcode)
         if ret["code"]<0:
             response="-1"
@@ -177,6 +178,7 @@ class OTPServerClient_scoket(StreamRequestHandler):
 
 if __name__=="__main__":
     if sys.argv[1]=="server":
+        otputil = OTPUtils()
         ThreadingTCPServer(("127.0.0.1", config.OTP_SERVER_PORT), OTPServer_scoket).serve_forever()
     elif sys.argv[1]=="util":
         otputil = OTPUtils()
@@ -196,5 +198,5 @@ if __name__=="__main__":
             os.unlink(config.SCOK_ADDR)
         except Exception as inst:
             print(inst)
-        print("Listening on {}".format(socket_file_name))
-        ThreadingUnixStreamServer(socket_file_name, OTPServerClient_scoket).serve_forever()
+        print("Listening on {}".format(config.SCOK_ADDR))
+        ThreadingUnixStreamServer(config.SCOK_ADDR, OTPServerClient_scoket).serve_forever()
