@@ -179,7 +179,7 @@ class OTPServerClient_scoket(StreamRequestHandler):
 if __name__=="__main__":
     if sys.argv[1]=="server":
         otputil = OTPUtils()
-        ThreadingTCPServer(("127.0.0.1", config.OTP_SERVER_PORT), OTPServer_scoket).serve_forever()
+        ThreadingTCPServer((config.OTP_SERVER_ADDR, config.OTP_SERVER_PORT), OTPServer_scoket).serve_forever()
     elif sys.argv[1]=="util":
         otputil = OTPUtils()
         if sys.argv[2]=="new":
@@ -195,8 +195,8 @@ if __name__=="__main__":
             pass
     elif sys.argv[1]=="client":
         try:
-            os.unlink(config.SCOK_ADDR)
+            os.unlink(config.SOCK_ADDR)
         except Exception as inst:
             print(inst)
-        print("Listening on {}".format(config.SCOK_ADDR))
-        ThreadingUnixStreamServer(config.SCOK_ADDR, OTPServerClient_scoket).serve_forever()
+        print("Listening on {}".format(config.SOCK_ADDR))
+        ThreadingUnixStreamServer(config.SOCK_ADDR, OTPServerClient_scoket).serve_forever()
