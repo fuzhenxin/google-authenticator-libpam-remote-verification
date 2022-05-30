@@ -149,7 +149,6 @@ class OTPServer_scoket(StreamRequestHandler):
             ret = self.otputil.verify_code(username, otpcode)
             if ret["code"]<0: response = b"-1"
             else: response = str(ret["data"]).encode()
-            response = b"-1"
         print([response])
         
         self.wfile.write(response)
