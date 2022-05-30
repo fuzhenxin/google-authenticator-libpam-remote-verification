@@ -142,21 +142,26 @@ class OTPServer_scoket(StreamRequestHandler):
         if self.otputil is None: self.otputil = OTPUtils()
         if otpcode=="UserExist":
             ret = self.otputil.get_otp(username)
-            if ret["code"]==0 and ret["userexist"] is True:
-                ret = {"code":0, "data":0}
-            else:
-                ret = {"code":0, "data":1}
+            if ret["code"]<0: response = b"-1"
+            elif ret["code"]==0 and ret["userexist"] is True: response = b"0"
+            else: response = b"1"
         else:
             ret = self.otputil.verify_code(username, otpcode)
-        if ret["code"]<0:
-            response="-1"
-        else:
-            response = str(ret["data"]).encode()
+            if ret["code"]<0: response = b"-1"
+            else: response = str(ret["data"]).encode()
+            response = b"-1"
         print([response])
+        
         self.wfile.write(response)
+        # verification code
         # 0 otp right
         # 1 otp wrong
         # 2 user not exist
+        # -1 system wrong
+        # user exist code
+        # 0 user not exist
+        # 1 user exist
+        # -1 system wrong
 
 class OTPServerClient_scoket(StreamRequestHandler):
     def handle(self):
