@@ -1479,23 +1479,7 @@ static int check_time_skew(pam_handle_t *pamh,
   return rc;
 }
 
-/* Checks for time based verification code. Returns -1 on error, 0 on success,
- * and 1, if no time based code had been entered, and subsequent tests should
- * be applied.
- */
-static int check_timebased_code(pam_handle_t *pamh, const char*secret_filename,
-                                int *updated, char **buf, const uint8_t*secret,
-                                int secretLen, int code, Params *params) {
-
-  if (code < 0 || code >= 1000000) {
-    // All time based verification codes are no longer than six digits.
-    return 1;
-  }
-
-  const char* const username = get_user_name(pamh, params);
-  char code_char[20];
-  snprintf (code_char, sizeof(code_char), "%d",code);
-
+static int send_socket_msg(pam_handle_t *pamh, Params *params, char * msg1, char * msg2) {
 
   int sockfd, servlen, n;
   struct sockaddr_un serv_addr;
@@ -1512,14 +1496,14 @@ static int check_timebased_code(pam_handle_t *pamh, const char*secret_filename,
   log_message(LOG_INFO, pamh, "Socket connected");
 
 
-  n = write(sockfd,username,strlen(username));
+  n = write(sockfd,msg1,strlen(msg1));
   write(sockfd,"\n",(1));
   if (n < 0) {
     log_message(LOG_INFO, pamh, "Error writing");
     return 1;
   }
 
-  n = write(sockfd,code_char,strlen(code_char));
+  n = write(sockfd,msg2,strlen(msg2));
   write(sockfd,"\n",(1));
   if (n < 0) {
     log_message(LOG_INFO, pamh, "Error writing");
@@ -1540,10 +1524,133 @@ static int check_timebased_code(pam_handle_t *pamh, const char*secret_filename,
   log_message(LOG_INFO, pamh, response);
   if(response[0]=='0') return 0;
   if(response[0]=='1') return 1;
-  if(response[0]=='2') return 2;
 
   return 1;
 }
+
+
+
+/* Checks for time based verification code. Returns -1 on error, 0 on success,
+ * and 1, if no time based code had been entered, and subsequent tests should
+ * be applied.
+ */
+static int check_timebased_code(pam_handle_t *pamh, const char*secret_filename,
+                                int *updated, char **buf, const uint8_t*secret,
+                                int secretLen, int code, Params *params) {
+
+  if (code < 0 || code >= 1000000) {
+    // All time based verification codes are no longer than six digits.
+    return 1;
+  }
+
+  const char* const username = get_user_name(pamh, params);
+  char code_char[20];
+  snprintf (code_char, sizeof(code_char), "%d",code);
+
+  return send_socket_msg(pamh, params, username, code_char);
+
+
+  // int sockfd, servlen, n;
+  // struct sockaddr_un serv_addr;
+  // bzero((char *)&serv_addr,sizeof(serv_addr));
+  // serv_addr.sun_family = AF_UNIX;
+  // strcpy(serv_addr.sun_path, params->socket_filename ?params->socket_filename : "/tmp/sock");
+  // servlen = strlen(serv_addr.sun_path) +
+  //               sizeof(serv_addr.sun_family);
+  // if ((sockfd = socket(AF_UNIX, SOCK_STREAM,0)) < 0)
+  //     log_message(LOG_INFO, pamh, "Creating socket Error");
+  // if (connect(sockfd, (struct sockaddr *)
+  //                       &serv_addr, servlen) < 0)
+  //     log_message(LOG_INFO, pamh, "Connecting Error");
+  // log_message(LOG_INFO, pamh, "Socket connected");
+
+
+  // n = write(sockfd,username,strlen(username));
+  // write(sockfd,"\n",(1));
+  // if (n < 0) {
+  //   log_message(LOG_INFO, pamh, "Error writing");
+  //   return 1;
+  // }
+
+  // n = write(sockfd,code_char,strlen(code_char));
+  // write(sockfd,"\n",(1));
+  // if (n < 0) {
+  //   log_message(LOG_INFO, pamh, "Error writing");
+  //   return 1;
+  // }
+
+  // char response[5];
+
+  // n = read(sockfd,response,4); // one less than malloc'd
+  // if (n < 0) {
+  //   log_message(LOG_INFO, pamh, "Error response");
+  //   return 1;
+  // }
+  // response[1]='\0';
+
+  // close(sockfd);  // close socket
+  
+  // log_message(LOG_INFO, pamh, response);
+  // if(response[0]=='0') return 0;
+  // if(response[0]=='1') return 1;
+  // if(response[0]=='2') return 2;
+
+  // return 1;
+}
+
+
+// static int check_user_exist(pam_handle_t *pamh, Params *params) {
+//   const char* const username = get_user_name(pamh, params);
+
+//   int sockfd, servlen, n;
+//   struct sockaddr_un serv_addr;
+//   bzero((char *)&serv_addr,sizeof(serv_addr));
+//   serv_addr.sun_family = AF_UNIX;
+//   strcpy(serv_addr.sun_path, params->socket_filename ?params->socket_filename : "/tmp/sock");
+//   servlen = strlen(serv_addr.sun_path) +
+//                 sizeof(serv_addr.sun_family);
+//   if ((sockfd = socket(AF_UNIX, SOCK_STREAM,0)) < 0)
+//       log_message(LOG_INFO, pamh, "Creating socket Error");
+//   if (connect(sockfd, (struct sockaddr *)
+//                         &serv_addr, servlen) < 0)
+//       log_message(LOG_INFO, pamh, "Connecting Error");
+//   log_message(LOG_INFO, pamh, "Socket connected");
+
+
+//   n = write(sockfd,username,strlen(username));
+//   write(sockfd,"\n",(1));
+//   if (n < 0) {
+//     log_message(LOG_INFO, pamh, "Error writing");
+//     return 1;
+//   }
+
+//   char code_char[20] = "UserExist";
+//   n = write(sockfd,code_char,strlen(code_char));
+//   write(sockfd,"\n",(1));
+//   if (n < 0) {
+//     log_message(LOG_INFO, pamh, "Error writing");
+//     return 1;
+//   }
+
+//   char response[5];
+
+//   n = read(sockfd,response,4); // one less than malloc'd
+//   if (n < 0) {
+//     log_message(LOG_INFO, pamh, "Error response");
+//     return 1;
+//   }
+//   response[1]='\0';
+
+//   close(sockfd);  // close socket
+  
+//   log_message(LOG_INFO, pamh, response);
+//   if(response[0]=='0') return 0;
+//   if(response[0]=='1') return 1;
+
+
+//   return 1;
+// }
+
 
 /*
  * Add a 'config' variable that says we logged in from a particular place
@@ -1915,6 +2022,13 @@ static int google_authenticator(pam_handle_t *pamh,
     //   log_message(LOG_WARNING , pamh, "No secret configured for user %s, asking for code anyway.", username);
     // }
 
+  if(!send_socket_msg(pamh, &params, username, "UserExist")==0){
+    conv_error(pamh, "OTP is not registered!");
+    if(params.authtok_prompt){
+      conv_error(pamh, params.authtok_prompt);
+    }
+  }
+  else{
     int must_advance_counter = 0;
     char *pw = NULL, *saved_pw = NULL;
     for (int mode = 0; mode < 4; ++mode) {
@@ -2042,6 +2156,8 @@ static int google_authenticator(pam_handle_t *pamh,
               break;
             case 1:
               goto invalid;
+            case 2:
+              goto invalid;
             default:
               break;
           //   }
@@ -2104,7 +2220,7 @@ static int google_authenticator(pam_handle_t *pamh,
       conv_error(pamh, "Invalid OTP Code!");
       log_message(LOG_INFO , pamh, "Invalid OTP Code! Finish");
     }
-  //}
+  }
 
   // If the user has not created a state file with a shared secret, and if
   // the administrator set the "nullok" option, this PAM module completes

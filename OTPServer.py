@@ -114,7 +114,6 @@ class OTPUtils:
         if ret["code"]<0: return ret
         return {"code": 0, "data": self.secret_to_url(user_id, new_secret)}
     
-
     def verify_code(self, userid, input_code):
         ret = self.get_otp(userid)
         if ret["code"]<0: return ret
@@ -134,14 +133,21 @@ class OTPServer_scoket(StreamRequestHandler):
         verify_json = self.rfile.readline(512).strip()
         verify_dict = json.loads(verify_json)
         username = verify_dict["Username"]
-        otpcode = verify_dict["OTPCode"]
+        otpcode = verify_dict["OTPCode"]       
         connection_key = verify_dict["ConnectionKey"]
         if connection_key!=config.CONNECTION_KEY:
             self.wfile.write("-4")
             return
         print([username, otpcode])
         if self.otputil is None: self.otputil = OTPUtils()
-        ret = self.otputil.verify_code(username, otpcode)
+        if otpcode=="UserExist":
+            ret = self.otputil.get_otp(username)
+            if ret["code"]==0 and ret["userexist"] is True:
+                ret = {"code":0, "data":0}
+            else:
+                ret = {"code":0, "data":1}
+        else:
+            ret = self.otputil.verify_code(username, otpcode)
         if ret["code"]<0:
             response="-1"
         else:
@@ -180,6 +186,13 @@ if __name__=="__main__":
     if sys.argv[1]=="server":
         otputil = OTPUtils()
         ThreadingTCPServer((config.OTP_SERVER_ADDR, config.OTP_SERVER_PORT), OTPServer_scoket).serve_forever()
+    elif sys.argv[1]=="client":
+        try:
+            os.unlink(config.SOCK_ADDR)
+        except Exception as inst:
+            print(inst)
+        print("Listening on {}".format(config.SOCK_ADDR))
+        ThreadingUnixStreamServer(config.SOCK_ADDR, OTPServerClient_scoket).serve_forever()
     elif sys.argv[1]=="util":
         otputil = OTPUtils()
         if sys.argv[2]=="new":
@@ -193,10 +206,3 @@ if __name__=="__main__":
             print(otputil.verify_code(sys.argv[3], sys.argv[4]))
         else:
             pass
-    elif sys.argv[1]=="client":
-        try:
-            os.unlink(config.SOCK_ADDR)
-        except Exception as inst:
-            print(inst)
-        print("Listening on {}".format(config.SOCK_ADDR))
-        ThreadingUnixStreamServer(config.SOCK_ADDR, OTPServerClient_scoket).serve_forever()
