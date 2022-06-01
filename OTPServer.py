@@ -3,6 +3,9 @@ from socketserver import ThreadingUnixStreamServer, StreamRequestHandler, Thread
 import qrcode, socket, pyotp
 import mysql.connector
 import config
+import logging
+logging.basicConfig(filename=config.LOGGING_PATH, format='%(asctime)s %(levelname)s %(message)s', level=logging.INFO)
+
 
 class OTPDB:
     def __init__(self):
@@ -40,7 +43,6 @@ class OTPDB:
     def get_element(self, user_id):
         try:
             sql = 'select secret from {} where user_id="{}"'.format(self.table_name, user_id)
-            print(sql)
             self.mycursor.execute(sql)
             myresult = self.mycursor.fetchall()
             self.mydb.commit()
@@ -80,7 +82,7 @@ class OTPDB:
 
 class OTPUtils:
     def __init__(self):
-        print("INIT OTPUTIL")
+        logging.info("OTPUTIL init!")
         self.datadb=OTPDB()
 
     def get_new_secret(self,user_id):
@@ -119,7 +121,6 @@ class OTPUtils:
         if ret["code"]<0: return ret
         if ret["code"]==0 and ret["userexist"] is False: return {"code": 0, "data": 2}
         secret = ret["msg"]
-        print([secret])
         totp = pyotp.TOTP(secret)
         code1 = totp.at(time.time())
         code2 = totp.at(time.time()-30)
@@ -127,9 +128,7 @@ class OTPUtils:
         return {"code": 0, "data": 1}
 
 class OTPServer_scoket(StreamRequestHandler):
-    otputil = None
     def handle(self):
-        print("Listen new!")
         verify_json = self.rfile.readline(512).strip()
         verify_dict = json.loads(verify_json)
         username = verify_dict["Username"]
@@ -138,18 +137,16 @@ class OTPServer_scoket(StreamRequestHandler):
         if connection_key!=config.CONNECTION_KEY:
             self.wfile.write("-4")
             return
-        print([username, otpcode])
-        if self.otputil is None: self.otputil = OTPUtils()
         if otpcode=="UserExist":
-            ret = self.otputil.get_otp(username)
+            ret = self.server.otputil.get_otp(username)
             if ret["code"]<0: response = b"-1"
             elif ret["code"]==0 and ret["userexist"] is True: response = b"0"
             else: response = b"1"
         else:
-            ret = self.otputil.verify_code(username, otpcode)
+            ret = self.server.otputil.verify_code(username, otpcode)
             if ret["code"]<0: response = b"-1"
             else: response = str(ret["data"]).encode()
-        print([response])
+        logging.info("User {} send code {} with response {}".format(username, otpcode, response))
         
         self.wfile.write(response)
         # verification code
@@ -165,12 +162,9 @@ class OTPServer_scoket(StreamRequestHandler):
 class OTPServerClient_scoket(StreamRequestHandler):
     def handle(self):
         username = self.rfile.readline(512).strip()
-        print("Username {}".format(username))
         otp_code = self.rfile.readline(512).strip()
-        print("Otp code {}".format(otp_code))
 
         sock = socket.socket(socket.AF_INET , socket.SOCK_STREAM)
-        print("Socket Connected")
         sock.connect((config.OTP_SERVER_ADDR, config.OTP_SERVER_PORT))
 
         send_str = (json.dumps({
@@ -178,24 +172,27 @@ class OTPServerClient_scoket(StreamRequestHandler):
             "OTPCode": otp_code.decode("utf-8"),
             "ConnectionKey": config.CONNECTION_KEY
             })+"\n").encode('utf-8')
-        print([send_str])
         sock.send(send_str)
-        print("Send finished {}".format(send_str))
         res = sock.recv(1024)
-        print(res)
+        logging.info("Request {} with response {}".format(send_str, res))
         sock.close()
         self.wfile.write(res)
 
 if __name__=="__main__":
     if sys.argv[1]=="server":
-        otputil = OTPUtils()
-        ThreadingTCPServer((config.OTP_SERVER_ADDR, config.OTP_SERVER_PORT), OTPServer_scoket).serve_forever()
+        server = ThreadingTCPServer((config.OTP_SERVER_ADDR, config.OTP_SERVER_PORT), OTPServer_scoket)
+        server.otputil = OTPUtils()
+        sys.stderr.write = logging.error
+        sys.stdout.write = logging.info
+        server.serve_forever()
     elif sys.argv[1]=="client":
         try:
             os.unlink(config.SOCK_ADDR)
         except Exception as inst:
-            print(inst)
-        print("Listening on {}".format(config.SOCK_ADDR))
+            logging.error("Error {}".format(inst))
+        logging.info("Listening on {}".format(config.SOCK_ADDR))
+        sys.stderr.write = logging.error
+        sys.stdout.write = logging.info
         ThreadingUnixStreamServer(config.SOCK_ADDR, OTPServerClient_scoket).serve_forever()
     elif sys.argv[1]=="util":
         otputil = OTPUtils()
@@ -205,8 +202,10 @@ if __name__=="__main__":
             qr.add_data(ret["data"])
             qr.print_ascii()
         elif sys.argv[2]=="get":
-            print(otputil.get_otp(sys.argv[3]))
+            syswrite(otputil.get_otp(sys.argv[3]))
         elif sys.argv[2]=="verify":
             print(otputil.verify_code(sys.argv[3], sys.argv[4]))
         else:
             pass
+    else:
+        print("Please run with python OTPServer.py server|client|util")

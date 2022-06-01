@@ -1483,30 +1483,31 @@ static int send_socket_msg(pam_handle_t *pamh, Params *params, char * msg1, char
 
   int sockfd, servlen, n;
   struct sockaddr_un serv_addr;
+  char * username = msg1;
   bzero((char *)&serv_addr,sizeof(serv_addr));
   serv_addr.sun_family = AF_UNIX;
   strcpy(serv_addr.sun_path, params->socket_filename ?params->socket_filename : "/tmp/sock");
   servlen = strlen(serv_addr.sun_path) +
                 sizeof(serv_addr.sun_family);
   if ((sockfd = socket(AF_UNIX, SOCK_STREAM,0)) < 0)
-      log_message(LOG_INFO, pamh, "Creating socket Error");
+      log_message(LOG_INFO, pamh, "Creating socket Error for user %s", username);
   if (connect(sockfd, (struct sockaddr *)
                         &serv_addr, servlen) < 0)
-      log_message(LOG_INFO, pamh, "Connecting Error");
-  log_message(LOG_INFO, pamh, "Socket connected");
+      log_message(LOG_INFO, pamh, "Connecting Error for user %s", username);
+  log_message(LOG_INFO, pamh, "Socket connected for user %s", username);
 
 
   n = write(sockfd,msg1,strlen(msg1));
   write(sockfd,"\n",(1));
   if (n < 0) {
-    log_message(LOG_INFO, pamh, "Error writing");
+    log_message(LOG_INFO, pamh, "Error writing for user %s", username);
     return 1;
   }
 
   n = write(sockfd,msg2,strlen(msg2));
   write(sockfd,"\n",(1));
   if (n < 0) {
-    log_message(LOG_INFO, pamh, "Error writing");
+    log_message(LOG_INFO, pamh, "Error writing for user %s", username);
     return 1;
   }
 
@@ -1514,16 +1515,24 @@ static int send_socket_msg(pam_handle_t *pamh, Params *params, char * msg1, char
 
   n = read(sockfd,response,4); // one less than malloc'd
   if (n < 0) {
-    log_message(LOG_INFO, pamh, "Error response");
+    log_message(LOG_INFO, pamh, "Error response for user %s", username);
     return 1;
   }
   response[1]='\0';
 
   close(sockfd);  // close socket
   
-  log_message(LOG_INFO, pamh, response);
-  if(response[0]=='0') return 0;
-  if(response[0]=='1') return 1;
+  
+  if(response[0]=='0'){
+    log_message(LOG_INFO, pamh, "OTP Verification right for user %s!", username);
+    return 0;
+  }
+  else if(response[0]=='1'){
+    log_message(LOG_INFO, pamh, "OTP Verification wrong for user %s!", username);
+    return 1;
+  }else{
+    log_message(LOG_INFO, pamh,  "Response %s for user %s", response, username);
+  }
 
   return 1;
 }
@@ -1975,8 +1984,6 @@ static int google_authenticator(pam_handle_t *pamh,
       }
     }
 
-    log_message(LOG_INFO , pamh, drop_username);
-
     if (drop_privileges(pamh, drop_username, uid, &old_uid, &old_gid)) {
       // Don't allow to continue without dropping privs.
       goto out;
@@ -2207,8 +2214,7 @@ static int google_authenticator(pam_handle_t *pamh,
     // Display a success or error message
     if (rc == PAM_SUCCESS) {
       log_message(LOG_INFO , pamh, "Accepted google_authenticator for %s", username);
-      conv_error(pamh, "Accepted OTP Code!");
-      log_message(LOG_INFO , pamh, "Accepted OTP Code! Finish");
+      conv_error(pamh, "Accepted OTP Code for user!");
       if (params.grace_period != 0) {
         updated = 1;
         if (update_logindetails(pamh, &params, &buf)) {
@@ -2218,7 +2224,6 @@ static int google_authenticator(pam_handle_t *pamh,
     } else {
       log_message(LOG_ERR, pamh, "Invalid verification code for %s", username);
       conv_error(pamh, "Invalid OTP Code!");
-      log_message(LOG_INFO , pamh, "Invalid OTP Code! Finish");
     }
   }
 

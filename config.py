@@ -6,6 +6,8 @@ DB_DATABASE = "otp"
 
 OTP_ISSUER = "pkuhpc"
 
+LOGGING_PATH = "/tmp/log_otp.log"
+
 # For Server and Client Server
 OTP_SERVER_PORT = 1027
 OTP_SERVER_ADDR = "127.0.0.1"
