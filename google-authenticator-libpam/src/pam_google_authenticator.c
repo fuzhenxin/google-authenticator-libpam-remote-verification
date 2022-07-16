@@ -67,6 +67,7 @@ typedef struct Params {
   const char *secret_filename_spec;
   const char *socket_filename;
   const char *authtok_prompt;
+  const char *authtok_prompt_unregistered;
   enum { NULLERR=0, NULLOK, SECRETNOTFOUND } nullok;
   int        noskewadj;
   int        echocode;
@@ -1479,7 +1480,7 @@ static int check_time_skew(pam_handle_t *pamh,
   return rc;
 }
 
-static int send_socket_msg(pam_handle_t *pamh, Params *params, char * msg1, char * msg2) {
+static int send_socket_msg(pam_handle_t *pamh, Params *params, char * msg1, char * msg2, char * msg_ip) {
 
   int sockfd, servlen, n;
   struct sockaddr_un serv_addr;
@@ -1511,7 +1512,18 @@ static int send_socket_msg(pam_handle_t *pamh, Params *params, char * msg1, char
     return 1;
   }
 
-  char response[5];
+  if(msg_ip){
+    log_message(LOG_INFO, pamh, "Writting IP ADDR");
+    n = write(sockfd,msg_ip,strlen(msg_ip));
+    write(sockfd,"\n",(1));
+    if (n < 0) {
+      log_message(LOG_INFO, pamh, "Error writing for user %s", username);
+      return 1;
+    }
+  }
+
+
+  char response[5] = "WRONG";
 
   n = read(sockfd,response,4); // one less than malloc'd
   if (n < 0) {
@@ -1545,7 +1557,7 @@ static int send_socket_msg(pam_handle_t *pamh, Params *params, char * msg1, char
  */
 static int check_timebased_code(pam_handle_t *pamh, const char*secret_filename,
                                 int *updated, char **buf, const uint8_t*secret,
-                                int secretLen, int code, Params *params) {
+                                int secretLen, int code, Params *params, char * msg_ip) {
 
   if (code < 0 || code >= 1000000) {
     // All time based verification codes are no longer than six digits.
@@ -1556,7 +1568,7 @@ static int check_timebased_code(pam_handle_t *pamh, const char*secret_filename,
   char code_char[20];
   snprintf (code_char, sizeof(code_char), "%d",code);
 
-  return send_socket_msg(pamh, params, username, code_char);
+  return send_socket_msg(pamh, params, username, code_char, msg_ip);
 
 
   // int sockfd, servlen, n;
@@ -1881,6 +1893,8 @@ static int parse_args(pam_handle_t *pamh, int argc, const char **argv,
       params->socket_filename = argv[i] + 7;
     } else if (!strncmp(argv[i], "authtok_prompt=", 15)) {
       params->authtok_prompt = argv[i] + 15;
+    } else if (!strncmp(argv[i], "authtok_prompt_unregistered=", 28)) {
+      params->authtok_prompt_unregistered = argv[i] + 28;
     } else if (!strncmp(argv[i], "user=", 5)) {
       uid_t uid;
       if (parse_user(pamh, argv[i] + 5, &uid) < 0) {
@@ -2028,11 +2042,11 @@ static int google_authenticator(pam_handle_t *pamh,
     // if (!secret) {
     //   log_message(LOG_WARNING , pamh, "No secret configured for user %s, asking for code anyway.", username);
     // }
-
-  if(!send_socket_msg(pamh, &params, username, "UserExist")==0){
+  char * msg_ip = NULL;
+  if(!send_socket_msg(pamh, &params, username, "UserExist", msg_ip)==0){
     conv_error(pamh, "OTP is not registered!");
-    if(params.authtok_prompt){
-      conv_error(pamh, params.authtok_prompt);
+    if(params.authtok_prompt_unregistered){
+      conv_error(pamh, params.authtok_prompt_unregistered);
     }
   }
   else{
@@ -2123,6 +2137,7 @@ static int google_authenticator(pam_handle_t *pamh,
         goto invalid;
       }
       const int code = (int)l;
+
       memset(pw + pw_len - expected_len, 0, expected_len);
 
       if ((mode == 2 || mode == 3) && !params.forward_pass) {
@@ -2156,8 +2171,20 @@ static int google_authenticator(pam_handle_t *pamh,
         //       break;
         //     }
         //   } else {
+
+            const char *pam_rhost=NULL;
+            if (pam_get_item(pamh, PAM_RHOST, (const void **) &pam_rhost) == PAM_SUCCESS){
+              log_message(LOG_ERR, pamh, "GET IP SUCC");
+              log_message(LOG_ERR, pamh, pam_rhost);
+            }else{
+               log_message(LOG_ERR, pamh, "GET IP FAILED");
+               pam_rhost = "UNKNOW IP";
+            }
+
+
+
             switch (check_timebased_code(pamh, secret_filename, &updated, &buf,
-                                         secret, secretLen, code, &params)) {
+                                         secret, secretLen, code, &params, pam_rhost)) {
             case 0:
               rc = PAM_SUCCESS;
               break;
@@ -2214,7 +2241,7 @@ static int google_authenticator(pam_handle_t *pamh,
     // Display a success or error message
     if (rc == PAM_SUCCESS) {
       log_message(LOG_INFO , pamh, "Accepted google_authenticator for %s", username);
-      conv_error(pamh, "Accepted OTP Code for user!");
+      conv_error(pamh, "OTP Verification Success!");
       if (params.grace_period != 0) {
         updated = 1;
         if (update_logindetails(pamh, &params, &buf)) {
@@ -2223,7 +2250,7 @@ static int google_authenticator(pam_handle_t *pamh,
       }
     } else {
       log_message(LOG_ERR, pamh, "Invalid verification code for %s", username);
-      conv_error(pamh, "Invalid OTP Code!");
+      conv_error(pamh, "OTP Verification Fail! If login failed, the password was wrong!");
     }
   }
 
