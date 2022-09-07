@@ -2,7 +2,7 @@ import os, sys, time, json
 from socketserver import ThreadingUnixStreamServer, StreamRequestHandler, ThreadingTCPServer
 import qrcode, socket, pyotp
 import mysql.connector
-import config1 as config
+import config as config
 import logging
 import threading
 logging.basicConfig(filename=config.LOGGING_PATH, format='%(asctime)s %(levelname)s %(message)s', level=logging.INFO)
@@ -141,7 +141,9 @@ class OTPUtils:
 
     def get_otp(self, user_id):
         ret = self.datadb.get_secret(user_id, self.datadb.table_name_secret)
-        if ret["code"]<0: return ret
+        if ret["code"]<0:
+            logging.error(str(user_id)+str(ret))
+            return ret
         if len(ret["data"])==0:
             # return self.get_new_otp(user_id)
             return {"code": 0, "msg":"User not exist!", "userexist": False}
@@ -150,7 +152,9 @@ class OTPUtils:
 
     def get_new_otp(self, user_id):
         ret = self.get_new_secret(user_id)
-        if ret["code"] < 0: return ret
+        if ret["code"]<0:
+            logging.error(str(user_id)+str(ret))
+            return ret
         new_secret = ret["data"]
 
         insert_dict = {
@@ -159,12 +163,16 @@ class OTPUtils:
             "update_time": time.strftime('%Y-%m-%d %H:%M:%S'),
         }
         ret = self.datadb.insert_one_line(insert_dict, self.datadb.table_name_secret)
-        if ret["code"]<0: return ret
+        if ret["code"]<0:
+            logging.error(str(user_id)+str(ret))
+            return ret
         return {"code": 0, "data": self.secret_to_url(user_id, new_secret)}
     
     def verify_code(self, userid, input_code):
         ret = self.get_otp(userid)
-        if ret["code"]<0: return ret
+        if ret["code"]<0:
+            logging.error(str(user_id)+str(ret))
+            return ret
         if ret["code"]==0 and ret["userexist"] is False: return {"code": 0, "data": 2}
         secret = ret["msg"]
         totp = pyotp.TOTP(secret)
@@ -183,7 +191,9 @@ class OTPUtils:
             "update_time": time.strftime('%Y-%m-%d %H:%M:%S'),
         }
         ret = self.datadb.insert_one_line(insert_dict, self.datadb.table_name_login)
-        if ret["code"]<0: return ret
+        if ret["code"]<0:
+            logging.error(str(user_id)+str(ret))
+            return ret
         login_id = ret["data"]
 
         while True:
@@ -213,47 +223,57 @@ class OTPUtils:
 
 class OTPServer_scoket(StreamRequestHandler):
     def handle(self):
-        verify_json = self.rfile.readline(512).strip()
-        verify_dict = json.loads(verify_json)
-        username = verify_dict["Username"]
-        otpcode = verify_dict["OTPCode"]    
-        ipaddr = verify_dict["IPAddr"]  
-        connection_key = verify_dict["ConnectionKey"]
+        try:
+            verify_json = self.rfile.readline(512).strip()
+            verify_dict = json.loads(verify_json)
+            username = verify_dict["Username"]
+            otpcode = verify_dict["OTPCode"]    
+            ipaddr = verify_dict["IPAddr"]  
+            connection_key = verify_dict["ConnectionKey"]
 
-        ret_code = self.check_block(username, ipaddr)
-        if ret_code!="0":
-            self.wfile.write(ret_code)
-            return 
+            ret_code = self.check_block(username, ipaddr)
+            if ret_code!=b"0":
+                self.wfile.write(ret_code) # 0 6 7
+                return 
 
-        if connection_key!=config.CONNECTION_KEY:
-            self.wfile.write("-4")
-            return
-        if otpcode=="UserExist":
-            ret = self.server.otputil.get_otp(username)
-            if ret["code"]<0: response = b"-1"
-            elif ret["code"]==0 and ret["userexist"] is True: response = b"0"
-            else: response = b"1"
-        else:
-            if otpcode=="111111":
-                print("Coming Here")
-                response = self.server.otputil.new_verification_request(username, ipaddr)["data"]
+            if connection_key!=config.CONNECTION_KEY:
+                self.wfile.write(b"9")
+                return
+            if otpcode=="UserExist":
+                ret = self.server.otputil.get_otp(username)
+                if ret["code"]<0:
+                    logging.error(str(verify_dict)+str(ret))
+                    response = b"9"
+                elif ret["code"]==0 and ret["userexist"] is True: response = b"0"
+                else: response = b"1"
             else:
-                logging.info("Verification_"+ipaddr)
-                ret = self.server.otputil.verify_code(username, otpcode)
-                if ret["code"]<0: response = b"-1"
-                else: response = str(ret["data"]).encode()
-        logging.info("User {} send code {} with response {}".format(username, otpcode, response))
-        
-        self.wfile.write(response)
+                if otpcode=="111111":
+                    print("Coming Here")
+                    response = self.server.otputil.new_verification_request(username, ipaddr)["data"]
+                else:
+                    logging.info("Verification_"+ipaddr)
+                    ret = self.server.otputil.verify_code(username, otpcode)
+                    if ret["code"]<0:
+                        logging.error(str(verify_dict)+str(ret))
+                        response = b"9"
+                    else: response = str(ret["data"]).encode()
+            logging.info("User {} send code {} with response {}".format(username, otpcode, response))
+            
+            self.wfile.write(response)
+        except Exception as inst:
+            self.wfile.write(b"9")
+            logging.error(str(inst))
         # verification code
         # 0 otp right
         # 1 otp wrong
         # 2 user not exist
-        # -1 system wrong
+        # 9 system wrong
+        # 6 7 block
+
         # user exist code
         # 0 user not exist
         # 1 user exist
-        # -1 system wrong
+        # 9 system wrong
 
 
     def check_block(self, username, ipaddr):
@@ -262,43 +282,43 @@ class OTPServer_scoket(StreamRequestHandler):
                 self.server.ipblocking = {"time": time.time()}
             dup_key = username+" "+ipaddr
             if dup_key in self.server.ipblocking and self.server.ipblocking[dup_key]>600:
-                return "-5"
+                return b"7"
             if dup_key not in self.server.ipblocking:
                 self.server.ipblocking[dup_key] = 1
             self.server.ipblocking[dup_key] += 1
 
             dup_key = username
             if dup_key in self.server.ipblocking and self.server.ipblocking[dup_key]>600:
-                return "-6"
+                return b"6"
             if dup_key not in self.server.ipblocking:
                 self.server.ipblocking[dup_key] = 1
             self.server.ipblocking[dup_key] += 1
-            return "0"
+            return b"0"
 
 class OTPServerClient_scoket(StreamRequestHandler):
     def handle(self):
-        username = self.rfile.readline(512).strip()
-        otp_code = self.rfile.readline(512).strip()
-        print([otp_code])
-        if otp_code==b"UserExist":
-            ip_addr = b"NULL"
-        else:
+        try:
+            username = self.rfile.readline(512).strip()
+            otp_code = self.rfile.readline(512).strip()
             ip_addr = self.rfile.readline(512).strip()
 
-        sock = socket.socket(socket.AF_INET , socket.SOCK_STREAM)
-        sock.connect((config.OTP_SERVER_ADDR, config.OTP_SERVER_PORT))
+            sock = socket.socket(socket.AF_INET , socket.SOCK_STREAM)
+            sock.connect((config.OTP_SERVER_ADDR, config.OTP_SERVER_PORT))
 
-        send_str = (json.dumps({
-            "Username": username.decode("utf-8"), 
-            "OTPCode": otp_code.decode("utf-8"),
-            "IPAddr": ip_addr.decode("utf-8"),
-            "ConnectionKey": config.CONNECTION_KEY
-            })+"\n").encode('utf-8')
-        sock.send(send_str)
-        res = sock.recv(1024)
-        logging.info("Request {} with response {}".format(send_str, res))
-        sock.close()
-        self.wfile.write(res)
+            send_str = (json.dumps({
+                "Username": username.decode("utf-8"), 
+                "OTPCode": otp_code.decode("utf-8"),
+                "IPAddr": ip_addr.decode("utf-8"),
+                "ConnectionKey": config.CONNECTION_KEY
+                })+"\n").encode('utf-8')
+            sock.send(send_str)
+            res = sock.recv(1024)
+            logging.info("Request {} with response {}".format(send_str, res))
+            sock.close()
+            self.wfile.write(res)
+        except Exception as inst:
+            self.wfile.write(b"9")
+            logging.error(str(inst))
 
 if __name__=="__main__":
     if sys.argv[1]=="server":

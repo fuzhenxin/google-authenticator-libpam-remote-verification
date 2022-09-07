@@ -1512,18 +1512,15 @@ static int send_socket_msg(pam_handle_t *pamh, Params *params, char * msg1, char
     return 1;
   }
 
-  if(msg_ip){
-    log_message(LOG_INFO, pamh, "Writting IP ADDR");
-    n = write(sockfd,msg_ip,strlen(msg_ip));
-    write(sockfd,"\n",(1));
-    if (n < 0) {
-      log_message(LOG_INFO, pamh, "Error writing for user %s", username);
-      return 1;
-    }
+  log_message(LOG_INFO, pamh, "Writting IP ADDR");
+  n = write(sockfd,msg_ip,strlen(msg_ip));
+  write(sockfd,"\n",(1));
+  if (n < 0) {
+    log_message(LOG_INFO, pamh, "Error writing for user %s", username);
+    return 1;
   }
 
-
-  char response[5] = "WRONG";
+  char response[5] = "9";
 
   n = read(sockfd,response,4); // one less than malloc'd
   if (n < 0) {
@@ -1542,6 +1539,9 @@ static int send_socket_msg(pam_handle_t *pamh, Params *params, char * msg1, char
   else if(response[0]=='1'){
     log_message(LOG_INFO, pamh, "OTP Verification wrong for user %s!", username);
     return 1;
+  }else if(response[0]=='9'){
+    log_message(LOG_INFO, pamh, "System Wrong %s", username);
+    return 9;
   }else{
     log_message(LOG_INFO, pamh,  "Response %s for user %s", response, username);
   }
@@ -2042,14 +2042,25 @@ static int google_authenticator(pam_handle_t *pamh,
     // if (!secret) {
     //   log_message(LOG_WARNING , pamh, "No secret configured for user %s, asking for code anyway.", username);
     // }
-  char * msg_ip = NULL;
-  if(!send_socket_msg(pamh, &params, username, "UserExist", msg_ip)==0){
+
+  const char *pam_rhost=NULL;
+  if (pam_get_item(pamh, PAM_RHOST, (const void **) &pam_rhost) == PAM_SUCCESS){
+    log_message(LOG_ERR, pamh, "GET IP SUCC");
+    log_message(LOG_ERR, pamh, pam_rhost);
+  }else{
+      log_message(LOG_ERR, pamh, "GET IP FAILED");
+      pam_rhost = "UNKNOW IP";
+  }
+
+  int ret_user_exist = send_socket_msg(pamh, &params, username, "UserExist", pam_rhost);
+  if(ret_user_exist==1){
     conv_error(pamh, "OTP is not registered!");
     if(params.authtok_prompt_unregistered){
       conv_error(pamh, params.authtok_prompt_unregistered);
     }
-  }
-  else{
+  }else if(ret_user_exist==9){
+    conv_error(pamh, "System Wrong. Please send email to manager.");
+  }else{
     int must_advance_counter = 0;
     char *pw = NULL, *saved_pw = NULL;
     for (int mode = 0; mode < 4; ++mode) {
@@ -2172,17 +2183,6 @@ static int google_authenticator(pam_handle_t *pamh,
         //     }
         //   } else {
 
-            const char *pam_rhost=NULL;
-            if (pam_get_item(pamh, PAM_RHOST, (const void **) &pam_rhost) == PAM_SUCCESS){
-              log_message(LOG_ERR, pamh, "GET IP SUCC");
-              log_message(LOG_ERR, pamh, pam_rhost);
-            }else{
-               log_message(LOG_ERR, pamh, "GET IP FAILED");
-               pam_rhost = "UNKNOW IP";
-            }
-
-
-
             switch (check_timebased_code(pamh, secret_filename, &updated, &buf,
                                          secret, secretLen, code, &params, pam_rhost)) {
             case 0:
@@ -2192,6 +2192,9 @@ static int google_authenticator(pam_handle_t *pamh,
               goto invalid;
             case 2:
               goto invalid;
+            case 9:
+              conv_error(pamh, "System Wrong. Please contact manager.");
+              break;
             default:
               break;
           //   }
